@@ -7,8 +7,6 @@ import json
 import asyncio
 import yt_dlp
 
-import json
-
 def load_data():
     with open("storage.json", "r") as f:
         return json.load(f)
@@ -155,7 +153,6 @@ async def rickroll(ctx):
             if error:
                 print(error)
 
-            # disconnect safely (async → thread-safe)
             fut = asyncio.run_coroutine_threadsafe(
                 voice.disconnect(),
                 bot.loop
@@ -180,15 +177,14 @@ def play_next(ctx):
     data = load_data()
 
     if len(data["queue"]) == 0:
-        # leave VC if no more songs
-        fut = asyncio.run_coroutine_threadsafe(
-            ctx.voice_client.disconnect(),
-            bot.loop
-        )
+        if ctx.voice_client:
+            asyncio.run_coroutine_threadsafe(
+                ctx.voice_client.disconnect(),
+                bot.loop
+            )
         return
 
     song = data["queue"][0]
-
     url = song["url"]
     title = song["title"]
 
@@ -210,9 +206,10 @@ def play_next(ctx):
     def after_playing(error):
         if error:
             print(error)
+        fresh = load_data()
+        fresh["queue"].pop(0)
+        save_data(fresh)
         play_next(ctx)
-        data["queue"].pop(0)
-        save_data(data)
 
     ctx.voice_client.play(source, after=after_playing)
 
@@ -232,7 +229,11 @@ async def play(ctx, url):
     if not ctx.voice_client:
         await ctx.author.voice.channel.connect()
 
+    guild_id = str(ctx.guild.id)
     data = load_data()
+
+    if guild_id not in data["queues"]:
+        data["queues"][guild_id] = []
 
     ydl_opts = {
         "format": "bestaudio",
@@ -243,7 +244,7 @@ async def play(ctx, url):
         info = ydl.extract_info(url, download=False)
         title = info.get("title", "Unknown")
 
-    data["queue"].append({
+    data["queues"][guild_id].append({
         "url": url,
         "title": title
     })
@@ -251,21 +252,22 @@ async def play(ctx, url):
 
     await ctx.send(f"Added to queue 🎶\n**{title}**")
 
-    # if nothing is playing → start
     if not ctx.voice_client.is_playing():
         play_next(ctx)
 
 # SHOW QUEUE
 @bot.command()
 async def queue(ctx):
+    guild_id = str(ctx.guild.id)
     data = load_data()
+    guild_queue = data.get("queues", {}).get(guild_id, [])
 
-    if not data["queue"]:
+    if not guild_queue:
         await ctx.send("Queue is empty :/")
         return
 
     msg = ""
-    for i, song in enumerate(data["queue"], start=1):
+    for i, song in enumerate(guild_queue, start=1):
         msg += f"{i}. {song['title']}\n"
 
     await ctx.send(msg)
@@ -273,13 +275,23 @@ async def queue(ctx):
 # REMOVE FROM QUEUE
 @bot.command()
 async def remove(ctx, index: int):
+    guild_id = str(ctx.guild.id)
     data = load_data()
+    guild_queue = data.get("queues", {}).get(guild_id, [])
 
-    if index < 1 or index > len(data["queue"]):
+    if index < 1 or index > len(guild_queue):
         await ctx.send("Invalid index")
         return
 
-    removed = data["queue"].pop(index - 1)
+
+    if index == 1:
+        if ctx.voice_client and ctx.voice_client.is_playing():
+            ctx.voice_client.stop()
+            await ctx.send(f"Skipped and removed: **{guild_queue[0]['title']}**")
+        return
+
+    removed = guild_queue.pop(index - 1)
+    data["queues"][guild_id] = guild_queue
     save_data(data)
 
     await ctx.send(f"Removed: **{removed['title']}**")
@@ -295,15 +307,12 @@ async def skip(ctx):
 
 @bot.command()
 async def clear(ctx):
+    guild_id = str(ctx.guild.id)
     data = load_data()
-    data['queue'].clear()
-    save_data()
+    if "queues" in data and guild_id in data["queues"]:
+        data["queues"][guild_id] = []
+    save_data(data)
     await ctx.send("Queue cleared")
-
-
-
-
-
 
 
 #====================help command, PLS DON'T TOUCH====================================
