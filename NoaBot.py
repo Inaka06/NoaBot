@@ -3,9 +3,26 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import os
 import random
+import json
+import asyncio
+import yt_dlp
+
+import json
+
+def load_data():
+    with open("storage.json", "r") as f:
+        return json.load(f)
+
+def save_data(data):
+    with open("storage.json", "w") as f:
+        json.dump(data, f, indent=4)
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
+
+
+#COMMANDS
+
 
 bot = commands.Bot(
     command_prefix="[",
@@ -16,6 +33,9 @@ bot = commands.Bot(
 @bot.event
 async def on_ready():
     print(f"Bot logged in as {bot.user}")
+    await bot.change_presence(
+        activity=discord.Game(name="use [info")
+    )
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -69,6 +89,225 @@ async def choose(ctx, *, options):
     else:
         await ctx.send(f"I'd choose: {random.choice(choices)}")
 
+
+@bot.command(
+    help="Joins author's voice channel(if any)",
+    brief=""
+)
+async def join(ctx):
+    if ctx.author.voice:
+        await ctx.message.author.voice.channel.connect()
+    else:
+        await ctx.send("Uh.. where are you?")
+
+@bot.command(
+    help="Leave the voice channel",
+    brief=""
+)
+async def leave(ctx):
+    if ctx.guild.voice_client:
+        await ctx.guild.voice_client.disconnect()
+        await ctx.send('Bye~')
+    else:
+        await ctx.send("I'm not in a voice channel, use the join command to make me join")
+
+@bot.command(
+    help="Adding things to a list",
+    brief="<text>"
+)
+async def list(ctx, *, arg):
+    data = load_data()
+    data["items"].append(arg)
+    save_data(data)
+
+    await ctx.send(data["items"])
+
+@bot.command(
+    help="Remove an element from the list",
+    brief="<int>"
+)
+async def pop(ctx, index: int):
+    data = load_data()
+
+    if index < 0 or index >= len(data["items"]):
+        await ctx.send("Invalid index")
+        return
+
+    removed = data["items"].pop(index)
+    save_data(data)
+
+    await ctx.send(f"Removed: {removed}\n{data['items']}")
+
+@bot.command(
+    help="pls don't.",
+    brief=""
+)
+async def rickroll(ctx):
+    if ctx.author.voice:
+        channel = ctx.author.voice.channel
+
+        if not ctx.voice_client:
+            await channel.connect()
+
+        voice = ctx.voice_client
+
+        def after_playing(error):
+            if error:
+                print(error)
+
+            # disconnect safely (async → thread-safe)
+            fut = asyncio.run_coroutine_threadsafe(
+                voice.disconnect(),
+                bot.loop
+            )
+            try:
+                fut.result()
+            except:
+                pass
+
+        source = discord.FFmpegPCMAudio("rickroll.mp3")
+        voice.play(source, after=after_playing)
+
+        await ctx.send("You did it yourself, not me")
+
+    else:
+        await ctx.send("Uh.. where are you?")
+
+
+
+#=========Music player=========
+def play_next(ctx):
+    data = load_data()
+
+    if len(data["queue"]) == 0:
+        # leave VC if no more songs
+        fut = asyncio.run_coroutine_threadsafe(
+            ctx.voice_client.disconnect(),
+            bot.loop
+        )
+        return
+
+    song = data["queue"][0]
+
+    url = song["url"]
+    title = song["title"]
+
+    ydl_opts = {
+        "format": "bestaudio",
+        "quiet": True
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        audio_url = info["url"]
+
+    source = discord.FFmpegPCMAudio(
+        audio_url,
+        before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+        options="-vn"
+    )
+
+    def after_playing(error):
+        if error:
+            print(error)
+        play_next(ctx)
+        data["queue"].pop(0)
+        save_data(data)
+
+    ctx.voice_client.play(source, after=after_playing)
+
+    asyncio.run_coroutine_threadsafe(
+        ctx.send(f"🎶 Now playing: **{title}**"),
+        bot.loop
+    )
+
+@bot.command(
+    help="Plays music"
+)
+async def play(ctx, url):
+    if not ctx.author.voice:
+        await ctx.send("Join a VC first 😭")
+        return
+
+    if not ctx.voice_client:
+        await ctx.author.voice.channel.connect()
+
+    data = load_data()
+
+    ydl_opts = {
+        "format": "bestaudio",
+        "quiet": True
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        title = info.get("title", "Unknown")
+
+    data["queue"].append({
+        "url": url,
+        "title": title
+    })
+    save_data(data)
+
+    await ctx.send(f"Added to queue 🎶\n**{title}**")
+
+    # if nothing is playing → start
+    if not ctx.voice_client.is_playing():
+        play_next(ctx)
+
+# SHOW QUEUE
+@bot.command()
+async def queue(ctx):
+    data = load_data()
+
+    if not data["queue"]:
+        await ctx.send("Queue is empty :/")
+        return
+
+    msg = ""
+    for i, song in enumerate(data["queue"], start=1):
+        msg += f"{i}. {song['title']}\n"
+
+    await ctx.send(msg)
+
+# REMOVE FROM QUEUE
+@bot.command()
+async def remove(ctx, index: int):
+    data = load_data()
+
+    if index < 1 or index > len(data["queue"]):
+        await ctx.send("Invalid index")
+        return
+
+    removed = data["queue"].pop(index - 1)
+    save_data(data)
+
+    await ctx.send(f"Removed: **{removed['title']}**")
+
+# SKIP SONG
+@bot.command()
+async def skip(ctx):
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("Skipped ⏭️")
+    else:
+        await ctx.send("Nothing is playing :/")
+
+@bot.command()
+async def clear(ctx):
+    data = load_data()
+    data['queue'].clear()
+    save_data()
+    await ctx.send("Queue cleared")
+
+
+
+
+
+
+
+#====================help command, PLS DON'T TOUCH====================================
+
 @bot.command(
     help="Shows bot information",
     brief=""
@@ -85,9 +324,6 @@ async def info(ctx):
     embed.add_field(name="Commands", value="Use `[help` to see all commands", inline=False)
 
     await ctx.send(embed=embed)
-
-
-#====================help command, PLS DON'T TOUCH====================================
 
 @bot.command(
     help="Shows all commands or info about a specific command",
