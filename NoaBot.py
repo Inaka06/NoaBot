@@ -173,10 +173,12 @@ async def rickroll(ctx):
 
 
 #=========Music player=========
-def play_next(ctx):
-    data = load_data()
 
-    if len(data["queue"]) == 0:
+def play_next(ctx, guild_id):
+    data = load_data()
+    guild_queue = data["queues"].get(guild_id, [])
+
+    if len(guild_queue) == 0:
         if ctx.voice_client:
             asyncio.run_coroutine_threadsafe(
                 ctx.voice_client.disconnect(),
@@ -184,7 +186,7 @@ def play_next(ctx):
             )
         return
 
-    song = data["queue"][0]
+    song = guild_queue[0]
     url = song["url"]
     title = song["title"]
 
@@ -206,10 +208,11 @@ def play_next(ctx):
     def after_playing(error):
         if error:
             print(error)
+        # Pop the finished song first, THEN play next
         fresh = load_data()
-        fresh["queue"].pop(0)
+        fresh["queues"][guild_id].pop(0)
         save_data(fresh)
-        play_next(ctx)
+        play_next(ctx, guild_id)
 
     ctx.voice_client.play(source, after=after_playing)
 
@@ -253,7 +256,7 @@ async def play(ctx, url):
     await ctx.send(f"Added to queue 🎶\n**{title}**")
 
     if not ctx.voice_client.is_playing():
-        play_next(ctx)
+        play_next(ctx, guild_id)
 
 # SHOW QUEUE
 @bot.command()
@@ -283,7 +286,8 @@ async def remove(ctx, index: int):
         await ctx.send("Invalid index")
         return
 
-
+    # If removing the currently playing song, stop it —
+    # after_playing will handle the pop and advance the queue cleanly
     if index == 1:
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.stop()
