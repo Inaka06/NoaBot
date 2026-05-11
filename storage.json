@@ -3,14 +3,7 @@
         "a",
         "c"
     ],
-    "queue": [
-        {
-            "url": "https://youtu.be/5Wxvq4PVeoo?si=sxa4WpP9qFxKCtAF",
-            "title": "Kepompong x Okaeri (full ver)"
-        },
-        {
-            "url": "https://youtu.be/5Wxvq4PVeoo?si=sxa4WpP9qFxKCtAF",
-            "title": "Kepompong x Okaeri (full ver)"
-        }
-    ]
+    "queues": {
+        "1421157285719314548": []
+    }
 }
